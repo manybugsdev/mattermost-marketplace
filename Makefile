@@ -53,7 +53,7 @@ run-server:
 ## Compile the server as a lambda function
 .PHONY: build-lambda
 build-lambda:
-	CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w $(LDFLAGS)" -tags lambda.norpc -o dist/bootstrap ./cmd/lambda/
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w $(LDFLAGS)" -tags lambda.norpc -o dist/bootstrap ./cmd/lambda/
 
 ## Package the lambda binary into a .zip artifact
 .PHONY: package-artifact
