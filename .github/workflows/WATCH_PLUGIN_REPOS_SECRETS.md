@@ -7,7 +7,7 @@ The `watch-plugin-repos.yml` workflow requires the following GitHub Secrets to b
 ### 1. `PLUGIN_REPO_OWNER`
 **Description**: The GitHub username or organization that owns the mattermost-plugin-* repositories you want to watch.
 
-**Example**: `manybugsdev` or `mattermost`
+**Example**: `your-username` or `your-organization`
 
 **How to set**: 
 - Go to your repository Settings → Secrets and variables → Actions
