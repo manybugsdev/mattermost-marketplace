@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
       
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         with:
           go-version: '1.22'
       
@@ -101,8 +101,8 @@ jobs:
             if echo "$release" | jq -e '.tag_name' > /dev/null 2>&1; then
               tag_name=$(echo "$release" | jq -r '.tag_name')
               
-              # Validate tag name format (version-like pattern)
-              if ! echo "$tag_name" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+              # Validate tag name format (semantic version pattern with optional pre-release/build metadata)
+              if ! echo "$tag_name" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([+-].*)?$'; then
                 echo "Skipping invalid tag format: $tag_name"
                 continue
               fi
@@ -127,7 +127,7 @@ jobs:
                 fi
                 
                 # Try to add the plugin (may fail if it's not properly formatted or built)
-                if go run ./cmd/generator/ add "$repo" "$tag_name" $author_flag; then
+                if go run ./cmd/generator/ add "$repo" "$tag_name" "$author_flag"; then
                   echo "Successfully added $repo $tag_name"
                   changes_made=true
                 else
@@ -160,13 +160,13 @@ jobs:
       
       - name: Setup Node.js for deployment
         if: env.changes_made == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
         with:
           node-version: '20'
       
       - name: Install Serverless
         if: env.changes_made == 'true'
-        run: npm i -g "serverless@<4.0.0"
+        run: npm i -g "serverless@^3.38.0"
       
       - name: Deploy to Lambda
         if: env.changes_made == 'true'
