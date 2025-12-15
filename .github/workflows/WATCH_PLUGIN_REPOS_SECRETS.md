@@ -124,10 +124,11 @@ This will manually trigger the workflow without waiting for the daily cron sched
 
 The workflow:
 1. Runs daily at 00:00 UTC (configurable via cron schedule)
-2. Fetches all repositories matching `mattermost-plugin-*` pattern owned by `PLUGIN_REPO_OWNER`
-3. Checks the latest release for each repository
-4. Compares with existing entries in `plugins.json`
-5. If a new version is found:
+2. Fetches all repositories matching `mattermost-plugin-*` pattern owned by `PLUGIN_REPO_OWNER` (with pagination support for accounts with >100 repos)
+3. Validates repository and tag names to prevent command injection
+4. Checks the latest release for each repository
+5. Compares with existing entries in `plugins.json`
+6. If a new version is found:
    - Adds it to `plugins.json` using the generator command
    - Commits the changes
    - Deploys to AWS Lambda using `make deploy-lambda`
