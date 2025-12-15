@@ -1,0 +1,133 @@
+name: Watch Plugin Repositories
+
+on:
+  schedule:
+    # Run once per day at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allow manual trigger for testing
+
+jobs:
+  watch-and-update:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Watch and update plugins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ secrets.PLUGIN_REPO_OWNER }}
+        run: |
+          set -e
+          
+          echo "Watching repositories owned by: $REPO_OWNER"
+          
+          # Get all mattermost-plugin-* repositories for the owner
+          repos=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/users/$REPO_OWNER/repos?per_page=100" | \
+            jq -r '.[] | select(.name | startswith("mattermost-plugin-")) | .name')
+          
+          if [ -z "$repos" ]; then
+            echo "No mattermost-plugin-* repositories found for owner: $REPO_OWNER"
+            exit 0
+          fi
+          
+          echo "Found repositories:"
+          echo "$repos"
+          
+          changes_made=false
+          
+          for repo in $repos; do
+            echo ""
+            echo "Checking $repo for new releases..."
+            
+            # Get latest release for this repository
+            release=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO_OWNER/$repo/releases/latest")
+            
+            # Check if release exists
+            if echo "$release" | jq -e '.tag_name' > /dev/null 2>&1; then
+              tag_name=$(echo "$release" | jq -r '.tag_name')
+              echo "Latest release: $tag_name"
+              
+              # Check if this version already exists in plugins.json
+              existing=$(jq -r --arg repo "$repo" --arg version "$tag_name" \
+                '.[] | select(.repo_name == $repo and .manifest.version == $version) | .manifest.version' \
+                plugins.json)
+              
+              if [ -z "$existing" ]; then
+                echo "New version detected: $tag_name"
+                echo "Adding $repo $tag_name to plugins.json..."
+                
+                # Determine author type based on secrets
+                author_flag="--community"
+                if [ "${{ secrets.PLUGIN_AUTHOR_TYPE }}" == "official" ]; then
+                  author_flag="--official"
+                elif [ "${{ secrets.PLUGIN_AUTHOR_TYPE }}" == "partner" ]; then
+                  author_flag="--partner"
+                fi
+                
+                # Try to add the plugin (may fail if it's not properly formatted or built)
+                if go run ./cmd/generator/ add "$repo" "$tag_name" $author_flag; then
+                  echo "Successfully added $repo $tag_name"
+                  changes_made=true
+                else
+                  echo "Failed to add $repo $tag_name - skipping"
+                fi
+              else
+                echo "Version $tag_name already exists in plugins.json"
+              fi
+            else
+              echo "No releases found for $repo"
+            fi
+          done
+          
+          if [ "$changes_made" = true ]; then
+            echo ""
+            echo "Changes detected, committing and pushing..."
+            echo "changes_made=true" >> $GITHUB_ENV
+          else
+            echo ""
+            echo "No changes to commit"
+            echo "changes_made=false" >> $GITHUB_ENV
+          fi
+      
+      - name: Commit changes
+        if: env.changes_made == 'true'
+        run: |
+          git add plugins.json
+          git commit -m "Auto-update: Add new plugin releases from watched repositories"
+          git push
+      
+      - name: Setup Node.js for deployment
+        if: env.changes_made == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Serverless
+        if: env.changes_made == 'true'
+        run: npm i -g "serverless@<4.0.0"
+      
+      - name: Deploy to Lambda
+        if: env.changes_made == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || 'us-east-1' }}
+          SLS_STAGE: ${{ secrets.SLS_STAGE || 'dev' }}
+        run: |
+          make deploy-lambda
