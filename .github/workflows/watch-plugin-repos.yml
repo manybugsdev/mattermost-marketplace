@@ -35,10 +35,40 @@ jobs:
           
           echo "Watching repositories owned by: $REPO_OWNER"
           
-          # Get all mattermost-plugin-* repositories for the owner
-          repos=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/users/$REPO_OWNER/repos?per_page=100" | \
-            jq -r '.[] | select(.name | startswith("mattermost-plugin-")) | .name')
+          # Function to fetch all repos with pagination
+          fetch_all_repos() {
+            local owner=$1
+            local page=1
+            local all_repos=""
+            
+            while true; do
+              # Try as user first, then as org if that fails
+              response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+                "https://api.github.com/users/$owner/repos?per_page=100&page=$page" 2>/dev/null)
+              
+              # Check if we got an error, try org endpoint
+              if echo "$response" | jq -e '.message' > /dev/null 2>&1; then
+                response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+                  "https://api.github.com/orgs/$owner/repos?per_page=100&page=$page" 2>/dev/null)
+              fi
+              
+              # Extract mattermost-plugin-* repos
+              repos=$(echo "$response" | jq -r '.[] | select(.name | startswith("mattermost-plugin-")) | .name')
+              
+              # If no repos found, we've reached the end
+              if [ -z "$repos" ]; then
+                break
+              fi
+              
+              all_repos="$all_repos$repos"$'\n'
+              page=$((page + 1))
+            done
+            
+            echo "$all_repos" | grep -v '^$'
+          }
+          
+          # Get all mattermost-plugin-* repositories with pagination
+          repos=$(fetch_all_repos "$REPO_OWNER")
           
           if [ -z "$repos" ]; then
             echo "No mattermost-plugin-* repositories found for owner: $REPO_OWNER"
@@ -50,7 +80,16 @@ jobs:
           
           changes_made=false
           
-          for repo in $repos; do
+          while IFS= read -r repo; do
+            # Skip empty lines
+            [ -z "$repo" ] && continue
+            
+            # Validate repo name format (alphanumeric, hyphens, underscores only)
+            if ! echo "$repo" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+              echo "Skipping invalid repository name: $repo"
+              continue
+            fi
+            
             echo ""
             echo "Checking $repo for new releases..."
             
@@ -61,6 +100,13 @@ jobs:
             # Check if release exists
             if echo "$release" | jq -e '.tag_name' > /dev/null 2>&1; then
               tag_name=$(echo "$release" | jq -r '.tag_name')
+              
+              # Validate tag name format (version-like pattern)
+              if ! echo "$tag_name" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+                echo "Skipping invalid tag format: $tag_name"
+                continue
+              fi
+              
               echo "Latest release: $tag_name"
               
               # Check if this version already exists in plugins.json
@@ -93,7 +139,7 @@ jobs:
             else
               echo "No releases found for $repo"
             fi
-          done
+          done <<< "$repos"
           
           if [ "$changes_made" = true ]; then
             echo ""
